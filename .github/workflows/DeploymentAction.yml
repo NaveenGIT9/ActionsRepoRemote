@@ -14,15 +14,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: Install Salesforce CLI
+      # Step 2: Install Salesforce CLI using GitHub Action
       - name: Install Salesforce CLI
-        run: |
-          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz
-          mkdir sfdx
-          tar xJf sfdx-linux-amd64.tar.xz -C sfdx --strip-components 1
-          ./sfdx/install
-          sfdx --version
-          sfdx plugins --core
+        uses: amtrack/sfdx-action@v1
 
       # Step 3: Authenticate to Dev Hub using JWT
       - name: Authenticate to Dev Hub
@@ -36,7 +30,7 @@ jobs:
           sfdx force:auth:jwt:grant --clientid $SF_CLIENT_ID --jwtkeyfile server.key --username $SF_USERNAME --instanceurl $SF_INSTANCE_URL
           sfdx force:org:display -u $SF_USERNAME
 
-      # Step 4: Create Scratch Org (optional, can skip if using a persistent org)
+      # Step 4: Create Scratch Org (optional)
       - name: Create Scratch Org
         env:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
@@ -49,7 +43,7 @@ jobs:
         run: |
           sfdx force:source:deploy -p force-app/main/default -u QA_ScratchOrg --checkonly --testlevel RunLocalTests
 
-      # Step 6: Run Tests (optional, can remove if already in deploy)
+      # Step 6: Run Apex Tests (optional)
       - name: Run Apex Tests
         run: |
           sfdx force:apex:test:run -u QA_ScratchOrg --resultformat human --wait 10
