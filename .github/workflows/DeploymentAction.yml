@@ -1,67 +1,55 @@
-name: Salesforce DX QA Deployment
+name: Deploy to QA
 
 on:
   push:
     branches:
-      - qa   # Trigger only on pushes to qa branch
+      - qa   # Trigger only on QA branch
 
 jobs:
-  deploy-to-scratch-org:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
+      # Step 1: Checkout the repo
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # 2. Install Node.js (required for npm)
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      # 3. Install Salesforce CLI via npm
+      # Step 2: Install Salesforce CLI
       - name: Install Salesforce CLI
-        run: npm install sfdx-cli --global
+        run: |
+          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz
+          mkdir sfdx
+          tar xJf sfdx-linux-amd64.tar.xz -C sfdx --strip-components 1
+          ./sfdx/install
+          sfdx --version
+          sfdx plugins --core
 
-      # 4. Authenticate to Dev Hub using JWT
+      # Step 3: Authenticate to Dev Hub using JWT
       - name: Authenticate to Dev Hub
         env:
           SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_SERVER_KEY: ${{ secrets.SF_SERVER_KEY }}
-          SF_USERNAME_HUB: ${{ secrets.SF_USERNAME_HUB }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
         run: |
-          # Write private key to temporary file
           echo "$SF_SERVER_KEY" > server.key
+          sfdx force:auth:jwt:grant --clientid $SF_CLIENT_ID --jwtkeyfile server.key --username $SF_USERNAME --instanceurl $SF_INSTANCE_URL
+          sfdx force:org:display -u $SF_USERNAME
 
-          # Authenticate using JWT
-          sfdx force:auth:jwt:grant \
-            --clientid $SF_CLIENT_ID \
-            --jwtkeyfile server.key \
-            --username $SF_USERNAME_HUB \
-            --instanceurl $SF_INSTANCE_URL
-
-          # Verify authentication
-          sfdx force:org:display -u $SF_USERNAME_HUB
-
-      # 5. Create Scratch Org
+      # Step 4: Create Scratch Org (optional, can skip if using a persistent org)
       - name: Create Scratch Org
+        env:
+          SF_USERNAME: ${{ secrets.SF_USERNAME }}
         run: |
-          sfdx force:org:create -f config/project-scratch-def.json -a QA_Scratch -s -d 7
-          sfdx force:org:display -u QA_Scratch
+          sfdx force:org:create -s -f config/project-scratch-def.json -a QA_ScratchOrg -v $SF_USERNAME
+          sfdx force:org:display -u QA_ScratchOrg
 
-      # 6. Push source to Scratch Org
-      - name: Deploy Source to Scratch Org
+      # Step 5: Deploy Source to Scratch Org
+      - name: Deploy Source
         run: |
-          sfdx force:source:push -u QA_Scratch
+          sfdx force:source:deploy -p force-app/main/default -u QA_ScratchOrg --checkonly --testlevel RunLocalTests
 
-      # 7. Run Apex Tests
+      # Step 6: Run Tests (optional, can remove if already in deploy)
       - name: Run Apex Tests
         run: |
-          sfdx force:apex:test:run -u QA_Scratch --wait 10 --resultformat human
-
-      # 8. Delete Scratch Org
-      - name: Delete Scratch Org
-        run: |
-          sfdx force:org:delete -u QA_Scratch -p
+          sfdx force:apex:test:run -u QA_ScratchOrg --resultformat human --wait 10
