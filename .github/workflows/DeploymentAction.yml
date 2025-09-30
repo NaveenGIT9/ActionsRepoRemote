@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: '20'
 
-      # 3. Install Salesforce CLI
+      # 3. Install Salesforce CLI via npm
       - name: Install Salesforce CLI
         run: npm install sfdx-cli --global
 
@@ -32,12 +32,17 @@ jobs:
           SF_USERNAME_HUB: ${{ secrets.SF_USERNAME_HUB }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
         run: |
+          # Write private key to temporary file
           echo "$SF_SERVER_KEY" > server.key
-          sfdx auth:jwt:grant \
+
+          # Authenticate using JWT
+          sfdx force:auth:jwt:grant \
             --clientid $SF_CLIENT_ID \
             --jwtkeyfile server.key \
             --username $SF_USERNAME_HUB \
             --instanceurl $SF_INSTANCE_URL
+
+          # Verify authentication
           sfdx force:org:display -u $SF_USERNAME_HUB
 
       # 5. Create Scratch Org
