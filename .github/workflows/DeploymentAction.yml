@@ -20,7 +20,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Salesforce CLI
-      uses: forcedotcom/sfdx-action@v1
+      uses: amtrack/sfdx-action@v1
 
     - name: Authenticate Dev Hub via JWT
       shell: bash
@@ -28,7 +28,7 @@ jobs:
         # Write private key safely
         printf "%s" "$SF_SERVER_KEY" > server.key
 
-        # Authenticate
+        # Authenticate using JWT
         sfdx force:auth:jwt:grant \
           --clientid "$SF_CLIENT_ID" \
           --jwtkeyfile server.key \
@@ -50,3 +50,7 @@ jobs:
     - name: Open Scratch Org (Optional)
       run: |
         sfdx force:org:open -u QA_Scratch
+
+    - name: Delete Scratch Org (Optional cleanup)
+      run: |
+        sfdx force:org:delete -u QA_Scratch -p
