@@ -10,34 +10,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout the repo
+      # Step 1: Checkout repository
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: Install Node.js (needed for npm) and Salesforce CLI
+      # Step 2: Setup Node.js (needed for npm)
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '20'
 
+      # Step 3: Install Salesforce CLI
       - name: Install Salesforce CLI
         run: |
           npm install sfdx-cli --global
           sfdx --version
 
-      # Step 3: Authenticate to Dev Hub using JWT
+      # Step 4: Authenticate to Dev Hub via JWT
       - name: Authenticate to Dev Hub
+        shell: bash
         env:
           SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
           SF_SERVER_KEY: ${{ secrets.SF_SERVER_KEY }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
         run: |
-          echo "$SF_SERVER_KEY" > server.key
-          sfdx force:auth:jwt:grant --clientid $SF_CLIENT_ID --jwtkeyfile server.key --username $SF_USERNAME --instanceurl $SF_INSTANCE_URL
+          # Write private key safely
+          printf "%s" "$SF_SERVER_KEY" > server.key
+
+          # Authenticate via JWT
+          sfdx force:auth:jwt:grant \
+            --clientid $SF_CLIENT_ID \
+            --jwtkeyfile server.key \
+            --username $SF_USERNAME \
+            --instanceurl $SF_INSTANCE_URL
+
+          # Verify login
           sfdx force:org:display -u $SF_USERNAME
 
-      # Step 4: Create Scratch Org (optional)
+      # Step 5: Create Scratch Org (optional)
       - name: Create Scratch Org
         env:
           SF_USERNAME: ${{ secrets.SF_USERNAME }}
@@ -45,12 +56,12 @@ jobs:
           sfdx force:org:create -s -f config/project-scratch-def.json -a QA_ScratchOrg -v $SF_USERNAME
           sfdx force:org:display -u QA_ScratchOrg
 
-      # Step 5: Deploy Source to Scratch Org
+      # Step 6: Deploy Source to Scratch Org
       - name: Deploy Source
         run: |
           sfdx force:source:deploy -p force-app/main/default -u QA_ScratchOrg --checkonly --testlevel RunLocalTests
 
-      # Step 6: Run Apex Tests (optional)
+      # Step 7: Run Apex Tests
       - name: Run Apex Tests
         run: |
           sfdx force:apex:test:run -u QA_ScratchOrg --resultformat human --wait 10
