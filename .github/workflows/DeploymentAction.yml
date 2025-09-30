@@ -21,17 +21,22 @@ jobs:
       uses: sfdx-actions/setup-sfdx@v1
 
     # 3. Authenticate to the Dev Hub using a JWT key.
-    # This method passes the key via an environment variable to avoid file corruption issues.
+    # This method writes the secret to a file and passes the file path to the CLI.
     - name: Authenticate Dev Hub via JWT
-      env:
-        # The Salesforce CLI automatically picks up this environment variable for JWT authentication.
-        SF_JWT_PRIVATE_KEY: ${{ secrets.SF_SERVER_KEY }}
       run: |
+        # Write the JWT private key from secrets into a temporary file.
+        printf "%s" "${{ secrets.SF_SERVER_KEY }}" > server.key
+
+        # Authenticate using the 'sf' command and providing the required --jwt-key-file flag.
         sf org login jwt \
           --client-id "${{ secrets.SF_CLIENT_ID }}" \
           --username "${{ secrets.SF_USERNAME }}" \
           --instance-url "${{ secrets.SF_INSTANCE_URL }}" \
+          --jwt-key-file server.key \
           --set-default-dev-hub
+
+        # Clean up the key file immediately after use for security.
+        rm server.key
 
     # 4. Create a new scratch org for testing.
     - name: Create Scratch Org
