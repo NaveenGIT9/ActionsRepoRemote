@@ -1,56 +1,67 @@
+# This workflow deploys Salesforce metadata to a scratch org when code is pushed to the 'qa' branch.
+# It uses the modern 'sf' CLI syntax and the official Salesforce GitHub Actions.
+
 name: Deploy to Scratch Org (QA)
 
 on:
   push:
     branches:
-      - qa   # Trigger only on QA branch
+      - qa  # Trigger only on the QA branch
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
-    env:
-      SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
-      SF_USERNAME: ${{ secrets.SF_USERNAME }}
-      SF_SERVER_KEY: ${{ secrets.SF_SERVER_KEY }}
-      SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
-
     steps:
+    # 1. Check out the repository's code so the workflow can access it.
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # 2. Install the Salesforce CLI using the official action.
+    # This replaces the outdated 'amtrack/sfdx-action'.
     - name: Install Salesforce CLI
-      uses: amtrack/sfdx-action@v1
+      uses: sfdx-actions/setup-sfdx@v1
 
+    # 3. Authenticate to the Dev Hub using a JWT key.
+    # This is a secure way to log in without storing passwords.
     - name: Authenticate Dev Hub via JWT
-      shell: bash
       run: |
-        # Write private key safely
-        printf "%s" "$SF_SERVER_KEY" > server.key
+        # The server key is stored as a GitHub Secret and written to a temporary file.
+        echo "${{ secrets.SF_SERVER_KEY }}" > server.key
 
-        # Authenticate using JWT
-        sfdx force:auth:jwt:grant \
-          --clientid "$SF_CLIENT_ID" \
-          --jwtkeyfile server.key \
-          --username "$SF_USERNAME" \
-          --instanceurl "$SF_INSTANCE_URL"
+        # Authenticate using the 'sf' command.
+        sf org login jwt \
+          --client-id "${{ secrets.SF_CLIENT_ID }}" \
+          --jwt-key-file server.key \
+          --username "${{ secrets.SF_USERNAME }}" \
+          --instance-url "${{ secrets.SF_INSTANCE_URL }}" \
+          --set-default-dev-hub
 
-        # Verify login
-        sfdx force:org:display -u "$SF_USERNAME"
+        # Clean up the key file after use.
+        rm server.key
 
+    # 4. Create a new scratch org for testing.
     - name: Create Scratch Org
       run: |
-        sfdx force:org:create -f config/project-scratch-def.json -a QA_Scratch -s -d 7
-        sfdx force:org:display -u QA_Scratch
+        sf org create scratch \
+          --definition-file config/project-scratch-def.json \
+          --alias QA_Scratch \
+          --set-default \
+          --duration-days 7
 
+    # 5. Deploy the source code from the repository to the scratch org.
     - name: Deploy to Scratch Org
       run: |
-        sfdx force:source:push -u QA_Scratch
+        sf project deploy start
 
-    - name: Open Scratch Org (Optional)
+    # 6. (Optional) This step generates a login link for manual access if needed.
+    # You can comment this out if you don't need it.
+    - name: Open Scratch Org (Generate Login Link)
       run: |
-        sfdx force:org:open -u QA_Scratch
+        sf org open --url-only
 
-    - name: Delete Scratch Org (Optional cleanup)
+    # 7. (Optional) Clean up by deleting the scratch org after the job is done.
+    # The 'if: always()' condition ensures this step runs even if a previous step fails.
+    - name: Delete Scratch Org
+      if: always()
       run: |
-        sfdx force:org:delete -u QA_Scratch -p
+        sf org delete scratch --no-prompt --target-org QA_Scratch
