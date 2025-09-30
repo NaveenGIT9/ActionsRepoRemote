@@ -17,28 +17,21 @@ jobs:
       uses: actions/checkout@v4
 
     # 2. Install the Salesforce CLI using the official action.
-    # This replaces the outdated 'amtrack/sfdx-action'.
     - name: Install Salesforce CLI
       uses: sfdx-actions/setup-sfdx@v1
 
     # 3. Authenticate to the Dev Hub using a JWT key.
-    # This is a secure way to log in without storing passwords.
+    # This method passes the key via an environment variable to avoid file corruption issues.
     - name: Authenticate Dev Hub via JWT
+      env:
+        # The Salesforce CLI automatically picks up this environment variable for JWT authentication.
+        SF_JWT_PRIVATE_KEY: ${{ secrets.SF_SERVER_KEY }}
       run: |
-        # The server key is stored as a GitHub Secret and written to a temporary file.
-        # Using printf is more reliable than echo for handling special characters in the key.
-        printf "%s" "${{ secrets.SF_SERVER_KEY }}" > server.key
-
-        # Authenticate using the 'sf' command.
         sf org login jwt \
           --client-id "${{ secrets.SF_CLIENT_ID }}" \
-          --jwt-key-file server.key \
           --username "${{ secrets.SF_USERNAME }}" \
           --instance-url "${{ secrets.SF_INSTANCE_URL }}" \
           --set-default-dev-hub
-
-        # Clean up the key file after use.
-        rm server.key
 
     # 4. Create a new scratch org for testing.
     - name: Create Scratch Org
@@ -55,7 +48,6 @@ jobs:
         sf project deploy start
 
     # 6. (Optional) This step generates a login link for manual access if needed.
-    # You can comment this out if you don't need it.
     - name: Open Scratch Org (Generate Login Link)
       run: |
         sf org open --url-only
