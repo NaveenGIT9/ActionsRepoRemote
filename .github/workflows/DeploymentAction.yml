@@ -26,7 +26,8 @@ jobs:
     - name: Authenticate Dev Hub via JWT
       run: |
         # The server key is stored as a GitHub Secret and written to a temporary file.
-        echo "${{ secrets.SF_SERVER_KEY }}" > server.key
+        # Using printf is more reliable than echo for handling special characters in the key.
+        printf "%s" "${{ secrets.SF_SERVER_KEY }}" > server.key
 
         # Authenticate using the 'sf' command.
         sf org login jwt \
