@@ -1,9 +1,9 @@
-name: Salesforce DX QA Deployment
+name: Salesforce DX QA Deployment (SFDX URL)
 
 on:
   push:
     branches:
-      - main   # Trigger workflow on pushes to main branch
+      - main  # Trigger workflow on pushes to main branch
 
 jobs:
   deploy-to-scratch-org:
@@ -20,54 +20,55 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y nodejs npm
-          npm install --global @salesforce/cli
+          # Use the new package name @salesforce/cli for consistency
+          npm install --global @salesforce/cli 
           echo "$(npm bin -g)" >> $GITHUB_PATH
           sfdx --version
 
-      # 3. Decode private key from base64 secret
-      - name: Write private key from b64 secret
-        env:
-          SF_SERVER_KEY_B64: ${{ secrets.SF_SERVER_KEY_B64 }}
-        run: |
-          echo "$SF_SERVER_KEY_B64" | base64 --decode > server.key
-          chmod 600 server.key
-          echo "Key loaded. Showing header:"
-          head -n 3 server.key || true
+      # --- CHANGES START HERE ---
 
-      # 4. Authenticate to Dev Hub using JWT
-      - name: Authenticate to Dev Hub (JWT)
+      # 3. Store SFDX Auth URL Secret and Authenticate to Dev Hub
+      - name: Authenticate to Dev Hub (SFDX URL)
         env:
-          SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
-          SF_USERNAME_HUB: ${{ secrets.SF_USERNAME_HUB }}
-          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          # This secret holds the full sfdxAuthUrl value
+          SFDX_AUTH_URL: ${{ secrets.SFDX_AUTH_URL }} 
         run: |
-          sfdx auth:jwt:grant \
-            --clientid "$SF_CLIENT_ID" \
-            --jwtkeyfile server.key \
-            --username "$SF_USERNAME_HUB" \
-            --instanceurl "$SF_INSTANCE_URL"
-
+          # Write the SFDX URL into a file
+          echo "$SFDX_AUTH_URL" > sfdx-auth-url.txt
+          
+          # Authenticate using the file and set an alias (DevHub)
+          sfdx auth:sfdxurl:store \
+            --sfdx-url-file sfdx-auth-url.txt \
+            --setalias DevHub \
+            --setdefaultdevhubusername 
+            
+          # Clean up the file 
+          rm sfdx-auth-url.txt
+          
           echo "Auth success. Listing orgs:"
           sfdx org list
 
-      # 5. Create Scratch Org
+      # --- CHANGES END HERE ---
+
+      # 4. Create Scratch Org
       - name: Create Scratch Org
         run: |
+          # -a QA_Scratch is the new alias
           sfdx org create scratch -f config/project-scratch-def.json -a QA_Scratch -s -d 7
           sfdx org display -o QA_Scratch
 
-      # 6. Push source to scratch org
+      # 5. Push source to scratch org
       - name: Push Source
         run: |
           sfdx project deploy start -o QA_Scratch --source-dir force-app
 
-      # 7. Run Apex Tests
+      # 6. Run Apex Tests
       - name: Run Apex Tests
         run: |
           sfdx apex run test -o QA_Scratch --wait 30 --result-format human || true
           sfdx apex get test-report -o QA_Scratch --output-dir test-results || true
 
-      # 8. Delete Scratch Org
+      # 7. Delete Scratch Org
       - name: Delete Scratch Org
         if: always()
         run: |
