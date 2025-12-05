@@ -1,6 +1,7 @@
 {
   "orgName": "Demo company",
   "edition": "Developer",
+  "snapshot": "MySnapshotName", // <-- ADD THIS LINE
   "features": ["EnableSetPasswordInApi"],
   "settings": {
     "lightningExperienceSettings": {
