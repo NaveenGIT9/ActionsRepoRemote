@@ -3,7 +3,7 @@ name: Salesforce DX QA Deployment
 on:
   push:
     branches:
-      - main   # Trigger workflow on pushes to main branchs
+      - main   # Trigger workflow on pushes to main branch
 
 jobs:
   deploy-to-scratch-org:
