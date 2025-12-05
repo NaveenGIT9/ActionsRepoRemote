@@ -3,7 +3,7 @@ name: Salesforce DX QA Deployment
 on:
   push:
     branches:
-      - main
+      - main   # Trigger workflow on pushes to main branch
 
 jobs:
   deploy-to-scratch-org:
@@ -11,79 +11,64 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # 1. Checkout source
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Install prerequisites
+      # 2. Install Node + NPM + Salesforce CLI
+      - name: Install Salesforce CLI (via npm)
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y unzip jq
-
-      - name: Install Salesforce CLI
-        run: |
-          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz -O sfdx.tar.xz
-          tar xJf sfdx.tar.xz
-          ./sfdx/install
-          # add sfdx to PATH for current session
-          export PATH="$PATH:$HOME/sfdx/bin"
+          sudo apt-get install -y nodejs npm
+          npm install --global @salesforce/cli
+          echo "$(npm bin -g)" >> $GITHUB_PATH
           sfdx --version
 
+      # 3. Decode private key from base64 secret
       - name: Write private key from b64 secret
         env:
           SF_SERVER_KEY_B64: ${{ secrets.SF_SERVER_KEY_B64 }}
         run: |
-          # decode the key and ensure permissions are safe
           echo "$SF_SERVER_KEY_B64" | base64 --decode > server.key
           chmod 600 server.key
-          echo "First 3 lines of server.key:"
+          echo "Key loaded. Showing header:"
           head -n 3 server.key || true
 
-      - name: Debug sfdx (optional, remove when done)
-        run: |
-          sfdx --version
-          sfdx plugins --core || true
-
+      # 4. Authenticate to Dev Hub using JWT
       - name: Authenticate to Dev Hub (JWT)
         env:
           SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
           SF_USERNAME_HUB: ${{ secrets.SF_USERNAME_HUB }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
         run: |
-          set -e
-          export PATH="$PATH:$HOME/sfdx/bin"
           sfdx auth:jwt:grant \
             --clientid "$SF_CLIENT_ID" \
             --jwtkeyfile server.key \
             --username "$SF_USERNAME_HUB" \
-            --instanceurl "$SF_INSTANCE_URL" || (echo "jwt auth failed" && sfdx force:org:list && exit 1)
-          echo "Auth succeeded. Listing authorized orgs:"
-          sfdx force:org:list --json
+            --instanceurl "$SF_INSTANCE_URL"
 
+          echo "Auth success. Listing orgs:"
+          sfdx org list
+
+      # 5. Create Scratch Org
       - name: Create Scratch Org
         run: |
-          export PATH="$PATH:$HOME/sfdx/bin"
-          sfdx force:org:create -f config/project-scratch-def.json -a QA_Scratch -s -d 7 --json
+          sfdx org create scratch -f config/project-scratch-def.json -a QA_Scratch -s -d 7
+          sfdx org display -o QA_Scratch
 
-      - name: Show Scratch Org Info
+      # 6. Push source to scratch org
+      - name: Push Source
         run: |
-          export PATH="$PATH:$HOME/sfdx/bin"
-          sfdx force:org:display -u QA_Scratch
+          sfdx project deploy start -o QA_Scratch --source-dir force-app
 
-      - name: Deploy Source to Scratch Org
-        run: |
-          export PATH="$PATH:$HOME/sfdx/bin"
-          sfdx force:source:push -u QA_Scratch
-
+      # 7. Run Apex Tests
       - name: Run Apex Tests
         run: |
-          export PATH="$PATH:$HOME/sfdx/bin"
-          # increase wait time if your tests are long
-          sfdx force:apex:test:run -u QA_Scratch --wait 30 --resultformat human || true
-          # fetch test results as JSON for diagnostics
-          sfdx force:apex:test:report -u QA_Scratch --outputdir test-results || true
+          sfdx apex run test -o QA_Scratch --wait 30 --result-format human || true
+          sfdx apex get test-report -o QA_Scratch --output-dir test-results || true
 
+      # 8. Delete Scratch Org
       - name: Delete Scratch Org
         if: always()
         run: |
-          export PATH="$PATH:$HOME/sfdx/bin"
-          sfdx force:org:delete -u QA_Scratch -p || true
+          sfdx org delete scratch -o QA_Scratch -p || true
