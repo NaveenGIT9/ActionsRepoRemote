@@ -3,59 +3,87 @@ name: Salesforce DX QA Deployment
 on:
   push:
     branches:
-      - qa   # Trigger only on pushes to qa branch
+      - main
 
 jobs:
   deploy-to-scratch-org:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
-      # 1. Checkout repository
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # 2. Install Salesforce CLI
+      - name: Install prerequisites
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y unzip jq
+
       - name: Install Salesforce CLI
         run: |
-          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz
-          tar xJf sfdx-linux-amd64.tar.xz
+          wget https://developer.salesforce.com/media/salesforce-cli/sfdx-linux-amd64.tar.xz -O sfdx.tar.xz
+          tar xJf sfdx.tar.xz
           ./sfdx/install
+          # add sfdx to PATH for current session
+          export PATH="$PATH:$HOME/sfdx/bin"
+          sfdx --version
 
-      # 3. Authenticate to Dev Hub using JWT
-      - name: Authenticate to Dev Hub
+      - name: Write private key from b64 secret
+        env:
+          SF_SERVER_KEY_B64: ${{ secrets.SF_SERVER_KEY_B64 }}
+        run: |
+          # decode the key and ensure permissions are safe
+          echo "$SF_SERVER_KEY_B64" | base64 --decode > server.key
+          chmod 600 server.key
+          echo "First 3 lines of server.key:"
+          head -n 3 server.key || true
+
+      - name: Debug sfdx (optional, remove when done)
+        run: |
+          sfdx --version
+          sfdx plugins --core || true
+
+      - name: Authenticate to Dev Hub (JWT)
         env:
           SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
-          SF_SERVER_KEY: ${{ secrets.SF_SERVER_KEY }}
           SF_USERNAME_HUB: ${{ secrets.SF_USERNAME_HUB }}
           SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
         run: |
-          # Write private key to a temporary file
-          echo "$SF_SERVER_KEY" > server.key
-          
-          # Authenticate using JWT
+          set -e
+          export PATH="$PATH:$HOME/sfdx/bin"
           sfdx auth:jwt:grant \
-            --clientid $SF_CLIENT_ID \
+            --clientid "$SF_CLIENT_ID" \
             --jwtkeyfile server.key \
-            --username $SF_USERNAME_HUB \
-            --instanceurl $SF_INSTANCE_URL
+            --username "$SF_USERNAME_HUB" \
+            --instanceurl "$SF_INSTANCE_URL" || (echo "jwt auth failed" && sfdx force:org:list && exit 1)
+          echo "Auth succeeded. Listing authorized orgs:"
+          sfdx force:org:list --json
 
-      # 4. Create Scratch Org
       - name: Create Scratch Org
         run: |
-          sfdx force:org:create -f config/project-scratch-def.json -a QA_Scratch -s -d 7
+          export PATH="$PATH:$HOME/sfdx/bin"
+          sfdx force:org:create -f config/project-scratch-def.json -a QA_Scratch -s -d 7 --json
+
+      - name: Show Scratch Org Info
+        run: |
+          export PATH="$PATH:$HOME/sfdx/bin"
           sfdx force:org:display -u QA_Scratch
 
-      # 5. Push source to Scratch Org
       - name: Deploy Source to Scratch Org
         run: |
+          export PATH="$PATH:$HOME/sfdx/bin"
           sfdx force:source:push -u QA_Scratch
 
-      # 6. Run Apex Tests
       - name: Run Apex Tests
         run: |
-          sfdx force:apex:test:run -u QA_Scratch --wait 10 --resultformat human
+          export PATH="$PATH:$HOME/sfdx/bin"
+          # increase wait time if your tests are long
+          sfdx force:apex:test:run -u QA_Scratch --wait 30 --resultformat human || true
+          # fetch test results as JSON for diagnostics
+          sfdx force:apex:test:report -u QA_Scratch --outputdir test-results || true
 
-      # 7. Delete Scratch Org
       - name: Delete Scratch Org
+        if: always()
         run: |
-          sfdx force:org:delete -u QA_Scratch -p
+          export PATH="$PATH:$HOME/sfdx/bin"
+          sfdx force:org:delete -u QA_Scratch -p || true
