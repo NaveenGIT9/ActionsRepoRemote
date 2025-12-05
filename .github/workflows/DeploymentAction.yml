@@ -11,6 +11,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
+
       # 1. Checkout source
       - name: Checkout Repository
         uses: actions/checkout@v3
@@ -20,42 +21,63 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y nodejs npm
-          # Use the new package name @salesforce/cli for consistency
-          npm install --global @salesforce/cli 
+          npm install --global @salesforce/cli
           echo "$(npm bin -g)" >> $GITHUB_PATH
           sfdx --version
 
-      # --- CHANGES START HERE ---
-
-      # 3. Store SFDX Auth URL Secret and Authenticate to Dev Hub
+      # 3. Authenticate to Dev Hub (SFDX URL)
       - name: Authenticate to Dev Hub (SFDX URL)
         env:
-          # This secret holds the full sfdxAuthUrl value
-          SFDX_AUTH_URL: ${{ secrets.SFDX_AUTH_URL }} 
+          SFDX_AUTH_URL: ${{ secrets.SFDX_AUTH_URL }}
         run: |
-          # Write the SFDX URL into a file
           echo "$SFDX_AUTH_URL" > sfdx-auth-url.txt
-          
-          # Authenticate using the file and set an alias (DevHub)
+
           sfdx auth:sfdxurl:store \
             --sfdx-url-file sfdx-auth-url.txt \
             --setalias DevHub \
-            --setdefaultdevhubusername 
-            
-          # Clean up the file 
+            --setdefaultdevhubusername
+
           rm sfdx-auth-url.txt
-          
           echo "Auth success. Listing orgs:"
           sfdx org list
 
-      # --- CHANGES END HERE ---
-
-      # 4. Create Scratch Org
-      - name: Create Scratch Org
+      # 4. Create Scratch Org (safe + debug)
+      - name: Create Scratch Org (safe)
+        shell: bash
+        env:
+          SNAPSHOT: ${{ secrets.SNAPSHOT_NAME || '' }}  # optional; may be empty
         run: |
-          # -a QA_Scratch is the new alias
-          sfdx org create scratch -f config/project-scratch-def.json -a QA_Scratch -s -d 7
-          sfdx org display -o QA_Scratch
+          set -euo pipefail
+
+          echo "---- Debug: environment ----"
+          echo "SNAPSHOT (masked): ${SNAPSHOT:+<set>}"
+          env | sed -E 's/(PASSWORD|TOKEN|KEY|SECRET|SFDX_AUTH_URL)=.*/\1=<masked>/g' | sort
+
+          echo "---- Validate project-scratch-def.json ----"
+          if command -v jq >/dev/null 2>&1; then
+            jq . config/project-scratch-def.json || { echo 'Invalid JSON'; cat config/project-scratch-def.json; exit 1; }
+          else
+            cat config/project-scratch-def.json
+            echo "Note: jq not found; visually inspect JSON above."
+          fi
+
+          echo "---- Decide args ----"
+          ARGS="-f config/project-scratch-def.json -a QA_Scratch -s -d 7"
+
+          if [ -n "$SNAPSHOT" ]; then
+            echo "Using snapshot: (masked)"
+            ARGS="$ARGS --snapshot $SNAPSHOT"
+          else
+            echo "No snapshot provided; not passing --snapshot flag."
+          fi
+
+          echo "Running: sfdx org create scratch $ARGS"
+          set -x
+          sfdx org create scratch $ARGS
+          set +x
+
+          echo "Display org:"
+          sfdx org display -o QA_Scratch || true
 
       # 5. Push source to scratch org
       - name: Push Source
