@@ -14,13 +14,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Install Salesforce CLI (via npm)
+      - name: Install Salesforce CLI (via npm) + jq
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y nodejs npm
+          sudo apt-get install -y nodejs npm jq
           npm install --global @salesforce/cli
           echo "$(npm bin -g)" >> $GITHUB_PATH
           sfdx --version
+          jq --version
 
       - name: Authenticate to Dev Hub (SFDX URL)
         env:
@@ -32,11 +33,8 @@ jobs:
           echo "$SFDX_AUTH_URL" > sfdx-auth-url.txt
 
           echo "Storing auth and setting alias 'DevHub'..."
-          # store and explicitly set default dev hub username
-          sfdx auth:sfdxurl:store \
-            --sfdx-url-file sfdx-auth-url.txt \
-            --setalias DevHub \
-            --setdefaultdevhubusername
+          # use canonical flag names
+          sfdx auth:sfdxurl:store --sfdxurlfile sfdx-auth-url.txt --setalias DevHub --setdefaultdevhubusername
 
           rm sfdx-auth-url.txt
 
@@ -44,12 +42,13 @@ jobs:
           sfdx org list --verbose || true
 
           echo "Ensure defaultdevhubusername is set:"
-          sfdx config:list || true
+          sfdx config:list --local --global || true
 
       - name: Create Scratch Org (safe)
         shell: bash
         env:
-          SNAPSHOT: ${{ secrets.SNAPSHOT_NAME || '' }}
+          # use canonical expression; if secret missing this becomes empty string
+          SNAPSHOT: ${{ secrets.SNAPSHOT_NAME }}
         run: |
           set -euo pipefail
 
@@ -61,27 +60,28 @@ jobs:
             echo "Note: jq not found; visually inspect JSON above."
           fi
 
-          # Defensive: ensure DevHub alias is set as default (idempotent)
           echo "Setting defaultdevhubusername=DevHub (idempotent)"
-          sfdx config:set defaultdevhubusername=DevHub
+          sfdx config:set defaultdevhubusername=DevHub --global || true
 
-          # Decide args and guard snapshot
+          # Prepare args and conditionally add --snapshot if present
           ARGS="-f config/project-scratch-def.json -a QA_Scratch -s -d 7"
-          if [ -n "$SNAPSHOT" ]; then
-            echo "Using snapshot from secrets (masked)"
+          if [ -n "${SNAPSHOT:-}" ]; then
+            echo "Snapshot provided (masked). Will attempt to use snapshot: ${SNAPSHOT}"
+            # verify snapshot exists in DevHub (best-effort)
+            echo "Listing snapshots on DevHub (for troubleshooting)..."
+            sfdx force:org:snapshot:list -v DevHub || echo "Snapshot list command failed or no snapshots present."
             ARGS="$ARGS --snapshot $SNAPSHOT"
           else
-            echo "No snapshot provided; not passing --snapshot flag."
+            echo "No snapshot provided; creating scratch org from project-scratch-def.json only."
           fi
 
-          echo "Running: sfdx org create scratch $ARGS -v DevHub"
+          echo "Running: sfdx force:org:create $ARGS --targetdevhubusername DevHub"
           set -x
-          # pass -v DevHub explicitly to be extra-safe
-          sfdx org create scratch $ARGS -v DevHub
+          sfdx force:org:create $ARGS --targetdevhubusername DevHub
           set +x
 
           echo "Display org:"
-          sfdx org display -o QA_Scratch || true
+          sfdx org display -u QA_Scratch || true
 
       - name: Push Source
         run: |
@@ -89,10 +89,10 @@ jobs:
 
       - name: Run Apex Tests
         run: |
-          sfdx apex run test -o QA_Scratch --wait 30 --result-format human || true
-          sfdx apex get test-report -o QA_Scratch --output-dir test-results || true
+          sfdx apex run test -u QA_Scratch --wait 30 --result-format human || true
+          sfdx apex get test-report -u QA_Scratch --output-dir test-results || true
 
       - name: Delete Scratch Org
         if: always()
         run: |
-          sfdx org delete scratch -o QA_Scratch -p || true
+          sfdx org delete scratch -u QA_Scratch -p || true
