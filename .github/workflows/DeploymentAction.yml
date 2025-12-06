@@ -20,8 +20,13 @@ jobs:
           sudo apt-get install -y nodejs npm jq
           npm install --global @salesforce/cli
           echo "$(npm bin -g)" >> $GITHUB_PATH
-          sfdx --version
-          jq --version
+
+          # Print both CLIs to help debugging
+          echo "sfdx version:"
+          sfdx --version || true
+          echo "sf version:"
+          sf --version || true
+          jq --version || true
 
       - name: Authenticate to Dev Hub (SFDX URL)
         env:
@@ -33,7 +38,7 @@ jobs:
           echo "$SFDX_AUTH_URL" > sfdx-auth-url.txt
 
           echo "Storing auth and setting alias 'DevHub'..."
-          # use canonical flag names
+          # Use auth:sfdxurl:store; both sf and sfdx should support this plugin command
           sfdx auth:sfdxurl:store --sfdxurlfile sfdx-auth-url.txt --setalias DevHub --setdefaultdevhubusername
 
           rm sfdx-auth-url.txt
@@ -41,13 +46,12 @@ jobs:
           echo "Auth step completed. Listing authenticated orgs:"
           sfdx org list --verbose || true
 
-          echo "Ensure defaultdevhubusername is set:"
+          echo "Config list (global/local):"
           sfdx config:list --local --global || true
 
-      - name: Create Scratch Org (safe)
+      - name: Create Scratch Org (safe)   # <-- CHANGED: use sf org create scratch
         shell: bash
         env:
-          # use canonical expression; if secret missing this becomes empty string
           SNAPSHOT: ${{ secrets.SNAPSHOT_NAME }}
         run: |
           set -euo pipefail
@@ -60,31 +64,34 @@ jobs:
             echo "Note: jq not found; visually inspect JSON above."
           fi
 
-          echo "Setting defaultdevhubusername=DevHub (idempotent)"
-          sfdx config:set defaultdevhubusername=DevHub --global || true
+          echo "Setting target-dev-hub=DevHub (idempotent)"
+          # prefer modern config name
+          sfdx config:set target-dev-hub=DevHub --global || true
 
-          # Prepare args and conditionally add --snapshot if present
-          ARGS="-f config/project-scratch-def.json -a QA_Scratch -s -d 7"
+          # Build args
+          ARGS="-f config/project-scratch-def.json -a QA_Scratch -s -d 7 --target-dev-hub DevHub"
+
           if [ -n "${SNAPSHOT:-}" ]; then
-            echo "Snapshot provided (masked). Will attempt to use snapshot: ${SNAPSHOT}"
-            # verify snapshot exists in DevHub (best-effort)
+            echo "Snapshot provided (masked). Will attempt to use snapshot: (masked)"
             echo "Listing snapshots on DevHub (for troubleshooting)..."
             sfdx force:org:snapshot:list -v DevHub || echo "Snapshot list command failed or no snapshots present."
-            ARGS="$ARGS --snapshot $SNAPSHOT"
+            ARGS="$ARGS --snapshot ${SNAPSHOT}"
           else
             echo "No snapshot provided; creating scratch org from project-scratch-def.json only."
           fi
 
-          echo "Running: sfdx force:org:create $ARGS --targetdevhubusername DevHub"
+          echo "Running: sf org create scratch $ARGS"
           set -x
-          sfdx force:org:create $ARGS --targetdevhubusername DevHub
+          # Use the modern sf CLI command that works with the installed @salesforce/cli
+          sf org create scratch $ARGS
           set +x
 
           echo "Display org:"
-          sfdx org display -u QA_Scratch || true
+          sf org display -o QA_Scratch || true
 
       - name: Push Source
         run: |
+          # push using the sf/sfdx commands you prefer; using sfdx project deploy start if available
           sfdx project deploy start -o QA_Scratch --source-dir force-app
 
       - name: Run Apex Tests
@@ -95,4 +102,4 @@ jobs:
       - name: Delete Scratch Org
         if: always()
         run: |
-          sfdx org delete scratch -u QA_Scratch -p || true
+          sf org delete scratch -o QA_Scratch -p || true
